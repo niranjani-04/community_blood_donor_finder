@@ -1,0 +1,33 @@
+.nav-link {
+    transition: all 0.3s ease;
+    border: 1px solid transparent;
+    margin: 0 5px;
+}
+
+.nav-link.active {
+    background: rgba(220, 53, 69, 0.2) !important;
+    border-color: #dc3545 !important;
+    color: #dc3545 !important;
+}
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 15px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.tab-section {
+    display: none;
+}
+
+.tab-section.active {
+    display: block;
+}
+
+.bg-gradient-danger {
+    background: linear-gradient(45deg, #dc3545, #9c1b27);
+    color: white;
+}

@@ -1,0 +1,9 @@
+{
+    "name": "community/blood-sos",
+    "description": "Blood SOS System",
+    "require": {
+        "php": "^8.0",
+        "ext-pdo": "*",
+        "ext-json": "*"
+    }
+}
