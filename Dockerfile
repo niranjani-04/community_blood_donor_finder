@@ -1,16 +1,30 @@
 FROM php:8.2-apache
 
-# Install MySQL extensions (PDO and MySQLi)
-RUN docker-php-ext-install pdo pdo_mysql mysqli
+# Install system dependencies and PHP extensions
+RUN apt-get update && apt-get install -y \
+    libpng-dev \
+    libonig-dev \
+    libxml2-dev \
+    zip \
+    unzip \
+    dos2unix \
+    && docker-php-ext-install pdo pdo_mysql mysqli mbstring gd
 
-# Enable Apache Rewrite Module (often needed for routing)
+# Enable Apache Rewrite Module
 RUN a2enmod rewrite
 
-# Copy application source code to the web root
+# Set working directory
+WORKDIR /var/www/html
+
+# Copy application source
 COPY . /var/www/html/
 
-# Set permissions
-RUN chown -R www-data:www-data /var/www/html
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
 
-# Expose port 80 for Railway
-EXPOSE 80
+# Fix permissions and line endings (CRLF to LF) for the script
+RUN dos2unix /usr/local/bin/docker-entrypoint.sh && \
+    chmod +x /usr/local/bin/docker-entrypoint.sh && \
+    chown -R www-data:www-data /var/www/html
+
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
