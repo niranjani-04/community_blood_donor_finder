@@ -5,20 +5,27 @@ RUN apt-get update && apt-get install -y \
     libpng-dev \
     libonig-dev \
     libxml2-dev \
+    zip \
+    unzip \
+    dos2unix \
     && docker-php-ext-install pdo_mysql mbstring gd
 
 # Enable Apache Rewrite
 RUN a2enmod rewrite
 
-# Copy application code
-COPY . /var/www/html/
+# Set working directory
 WORKDIR /var/www/html
 
-# Permissions
+# Copy application code
+COPY . /var/www/html/
+
+# Handle permissions
 RUN chown -R www-data:www-data /var/www/html
 
-# Dynamic Port Configuration & Start Apache
-# uses sed to replace port 80 with $PORT in the configurations
-CMD sh -c "sed -i \"s/Listen 80/Listen \${PORT:-80}/g\" /etc/apache2/ports.conf && \
-    sed -i \"s/<VirtualHost \*:80>/<VirtualHost *:\${PORT:-80}>/g\" /etc/apache2/sites-available/000-default.conf && \
-    apache2-foreground"
+# Set up the start script
+COPY start.sh /usr/local/bin/start.sh
+RUN dos2unix /usr/local/bin/start.sh && \
+    chmod +x /usr/local/bin/start.sh
+
+# Start using the script
+CMD ["/usr/local/bin/start.sh"]
