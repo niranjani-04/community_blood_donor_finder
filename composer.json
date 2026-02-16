@@ -2,12 +2,10 @@
     "name": "community/blood-sos",
     "description": "Blood SOS System",
     "require": {
-        "php": "^8.0",
+        "php": ">=8.0",
         "ext-pdo": "*",
-        "ext-pdo_mysql": "*",
         "ext-json": "*",
         "ext-curl": "*",
-        "ext-mbstring": "*",
-        "phpmailer/phpmailer": "^6.8"
+        "ext-mbstring": "*"
     }
 }
