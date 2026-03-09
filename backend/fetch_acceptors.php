@@ -9,7 +9,7 @@ if (!isset($_GET['alert_id'])) {
 $alert_id = $_GET['alert_id'];
 
 // Fetch donors who accepted this alert
-$sql = "SELECT u.name, u.blood_group, u.phone, r.status, r.accepted_at 
+$sql = "SELECT u.user_id, u.name, u.blood_group, u.phone, r.status, r.accepted_at 
         FROM sos_responses r 
         JOIN users u ON r.donor_id = u.user_id 
         WHERE r.alert_id = ? 

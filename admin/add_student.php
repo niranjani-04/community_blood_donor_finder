@@ -102,6 +102,8 @@
              $sync_stmt->execute([$name_input, $email_input, $phone_input, $blood_group_input, $reg_no_input]);
 
              $success = "Student updated successfully (and synced with active account)!";
+             header("Location: dashboard.php?success=student_updated#registry");
+             exit;
              // Update variables to reflect changes
              $name = $name_input; $dob = $dob_input; $age = $age_input; $health_eligibility = $health_input; $blood_group = $blood_group_input; $address = $address_input; $email = $email_input; $phone = $phone_input;
          } else {
@@ -117,6 +119,8 @@
              $stmt = $conn->prepare($sql);
              $stmt->execute([$reg_no_input, $name_input, $dob_input, $age_input, $health_input, $blood_group_input, $address_input, $email_input, $phone_input]);
              $success = "Student added successfully!";
+            header("Location: dashboard.php?success=student_added#registry");
+            exit;
              // Clear form
              if (!$is_edit) { $reg_no_input = ''; $name_input = ''; $dob_input = ''; $age_input=''; $health_input=''; $address_input=''; $email_input = ''; $phone_input = ''; }
          }

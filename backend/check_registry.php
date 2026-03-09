@@ -10,7 +10,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $student = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$student) {
-        echo json_encode(['status' => 'error', 'message' => 'Identity not found in college registry.']);
+        echo json_encode(['status' => 'error', 'message' => 'Verification failed: Student record not found.']);
         exit();
     }
 

@@ -23,8 +23,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $log_file = dirname(__FILE__) . '/notification_log.txt';
     $ts = date('Y-m-d H:i:s');
     file_put_contents($log_file, "[$ts] INCOMING SOS POST: " . json_encode($_POST) . "\n", FILE_APPEND);
-
+    
+    // SECURITY: Only activated accounts can create SOS alerts
     $requester_id = $_SESSION['user_id'];
+    $act_stmt = $conn->prepare("SELECT is_activated FROM users WHERE user_id = ?");
+    $act_stmt->execute([$requester_id]);
+    if ($act_stmt->fetchColumn() == 0) {
+        ob_end_clean();
+        echo json_encode(['status' => 'error', 'message' => 'Your account is not activated. SOS alerts are restricted.']);
+        exit();
+    }
     $blood_group = $_POST['blood_group'];
     $latitude = $_POST['latitude'];
     $longitude = $_POST['longitude'];
@@ -49,7 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     $log_file = dirname(__FILE__) . '/notification_log.txt';
     $ts = date('Y-m-d H:i:s');
     // Simplified location name for instant response
-    $location_name = "Emergency Location at ($latitude, $longitude)";
+    $location_name = $_POST['location_name'] ?? "Emergency Location at ($latitude, $longitude)";
     
     file_put_contents($log_file, "[$ts] STEP 1: Starting SOS for $blood_group (Instant Mode)\n", FILE_APPEND);
 

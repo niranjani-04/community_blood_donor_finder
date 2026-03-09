@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Level 1 DFD – Community Blood Donor Finder</title>
+  <style>
+    body {
+      margin: 0;
+      background: #fff;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      color: #000;
+      padding: 40px;
+    }
+
+    .diagram-container {
+      display: flex;
+      flex-direction: column;
+      gap: 60px;
+      max-width: 1200px;
+      margin: auto;
+    }
+
+    .section {
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    svg {
+      overflow: visible;
+    }
+
+    .node-rect {
+      fill: #fff;
+      stroke: #000;
+      stroke-width: 2;
+    }
+
+    .node-circle {
+      fill: #fff;
+      stroke: #000;
+      stroke-width: 2;
+    }
+
+    .node-text {
+      font-size: 14px;
+      font-weight: bold;
+      text-anchor: middle;
+      dominant-baseline: middle;
+    }
+
+    .flow-path {
+      fill: none;
+      stroke: #000;
+      stroke-width: 1.5;
+      marker-end: url(#arrowhead);
+    }
+
+    .flow-label {
+      font-size: 11px;
+      fill: #333;
+    }
+
+    marker#arrowhead {
+      stroke: none;
+      fill: #000;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h1 style="text-align: center; font-size: 24px;">Level 1 Data Flow Diagram</h1>
+  <p style="text-align: center; color: #666; margin-bottom: 40px;">Community-Based Emergency Blood Donor Finder System
+  </p>
+
+  <div class="diagram-container">
+
+    <!-- 🟢 DONOR / REQUESTER FLOW SECTION -->
+    <div class="section">
+      <h3 style="margin-bottom: 20px; border-bottom: 2px solid #eee;">Donor / Requester Flow</h3>
+      <svg width="1000" height="250">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" />
+          </marker>
+        </defs>
+
+        <!-- Entity: Donor -->
+        <g transform="translate(20, 80)">
+          <rect width="140" height="60" class="node-rect" />
+          <text x="70" y="30" class="node-text">Donor / Requester</text>
+        </g>
+
+        <!-- Process: Register -->
+        <g transform="translate(280, 50)">
+          <circle cx="60" cy="60" r="60" class="node-circle" />
+          <text x="60" y="60" class="node-text">Donor Registry</text>
+        </g>
+        <path d="M160,110 L280,110" class="flow-path" />
+        <text x="170" y="100" class="flow-label">Registration Data (Name, Phone, BG)</text>
+
+        <!-- Process: SOS Alert -->
+        <g transform="translate(540, 50)">
+          <circle cx="60" cy="60" r="60" class="node-circle" />
+          <text x="60" y="60" class="node-text">SOS Alert Message</text>
+        </g>
+        <path d="M400,110 L540,110" class="flow-path" />
+        <text x="410" y="100" class="flow-label">Alert Request (Blood Group, Location)</text>
+
+        <!-- Process: Location Tracking -->
+        <g transform="translate(800, 50)">
+          <circle cx="60" cy="60" r="60" class="node-circle" />
+          <text x="60" y="60" class="node-text">Donor Location Tracking</text>
+        </g>
+        <path d="M660,110 L800,110" class="flow-path" />
+        <text x="680" y="100" class="flow-label">GPS Coordinates (Live Feed)</text>
+
+        <!-- Outputs -->
+        <path d="M400,140 L450,200 L540,200" class="flow-path" />
+        <text x="430" y="190" class="flow-label">Donor Record Creation</text>
+        <g transform="translate(540, 180)">
+          <rect width="140" height="40" class="node-rect" />
+          <text x="70" y="20" class="node-text">Donor Database</text>
+        </g>
+
+        <path d="M660,140 L710,200 L800,200" class="flow-path" />
+        <text x="690" y="190" class="flow-label">Stored SOS Alert</text>
+        <g transform="translate(800, 180)">
+          <rect width="140" height="40" class="node-rect" />
+          <text x="70" y="20" class="node-text">SOS History</text>
+        </g>
+      </svg>
+    </div>
+
+    <!-- 🔴 ADMIN FLOW SECTION -->
+    <div class="section">
+      <h3 style="margin-bottom: 20px; border-bottom: 2px solid #eee;">Admin Flow</h3>
+      <svg width="1000" height="200">
+        <!-- Entity: Admin -->
+        <g transform="translate(20, 60)">
+          <rect width="140" height="60" class="node-rect" />
+          <text x="70" y="30" class="node-text">Admin</text>
+        </g>
+
+        <!-- Process: Manage Student Registry -->
+        <g transform="translate(280, 60)">
+          <circle cx="60" cy="30" r="60" class="node-circle" />
+          <text x="60" y="30" class="node-text">Student Registry</text>
+        </g>
+        <path d="M160,90 L280,90" class="flow-path" />
+        <text x="170" y="80" class="flow-label">Student Data (Register No, Health)</text>
+
+        <!-- Process: Authorization -->
+        <g transform="translate(540, 60)">
+          <circle cx="60" cy="30" r="60" class="node-circle" />
+          <text x="60" y="30" class="node-text">Activation Control</text>
+        </g>
+        <path d="M400,90 L540,90" class="flow-path" />
+        <text x="430" y="80" class="flow-label">Approval Status (Unlock Account)</text>
+
+        <!-- Output: System Stats -->
+        <g transform="translate(800, 70)">
+          <rect width="140" height="40" class="node-rect" />
+          <text x="70" y="20" class="node-text">User Records</text>
+        </g>
+        <path d="M660,90 L800,90" class="flow-path" />
+        <text x="680" y="80" class="flow-label">Data Retrieval Operation</text>
+      </svg>
+    </div>
+
+    <!-- 🔵 HOSPITAL FLOW SECTION -->
+    <div class="section">
+      <h3 style="margin-bottom: 20px; border-bottom: 2px solid #eee;">Hospital Flow</h3>
+      <svg width="1000" height="200">
+        <!-- Entity: Hospital -->
+        <g transform="translate(20, 60)">
+          <rect width="140" height="60" class="node-rect" />
+          <text x="70" y="30" class="node-text">Hospital</text>
+        </g>
+
+        <!-- Process: Inventory Data -->
+        <g transform="translate(280, 60)">
+          <circle cx="60" cy="30" r="60" class="node-circle" />
+          <text x="60" y="30" class="node-text">Inventory Data</text>
+        </g>
+        <path d="M160,90 L280,90" class="flow-path" />
+        <text x="170" y="80" class="flow-label">Stock Updates (Blood Units)</text>
+
+        <!-- Process: Stock Analysis -->
+        <g transform="translate(540, 60)">
+          <circle cx="60" cy="30" r="60" class="node-circle" />
+          <text x="60" y="30" class="node-text">Stock Broadcast</text>
+        </g>
+        <path d="M400,90 L540,90" class="flow-path" />
+        <text x="430" y="80" class="flow-label">Low Stock Trigger (Alerts)</text>
+
+        <!-- Output: Inventory Store -->
+        <g transform="translate(800, 70)">
+          <rect width="140" height="40" class="node-rect" />
+          <text x="70" y="20" class="node-text">Blood Inventory</text>
+        </g>
+        <path d="M660,90 L800,90" class="flow-path" />
+        <text x="680" y="80" class="flow-label">Inventory Database Synchronization</text>
+      </svg>
+    </div>
+
+  </div>
+
+  <div style="margin-top: 50px; padding: 20px; background: #f9f9f9; border-left: 5px solid #000;">
+    <h4 style="margin: 0 0 10px 0;">Legend</h4>
+    <ul style="margin: 0; padding-left: 20px; font-size: 14px;">
+      <li><strong>Rectangles:</strong> External Entities (Admin, Hospital, Donor) or Data Stores (Database, Records).
+      </li>
+      <li><strong>Circles:</strong> Core Processes (Registry, Alerts, Inventory Management).</li>
+      <li><strong>Arrows:</strong> Data flows labeled with important fields (Name, Location, Units).</li>
+    </ul>
+  </div>
+
+</body>
+
+</html>

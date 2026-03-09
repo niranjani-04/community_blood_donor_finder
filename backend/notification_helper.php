@@ -12,16 +12,17 @@ require dirname(__FILE__) . '/../libs/PHPMailer/SMTP.php';
 // Local fallbacks are provided for development but must be set securely in production.
 
 // Gmail Configuration
-define('SMTP_USER', getenv('SMTP_USER') ?: 'niranjani7890@gmail.com'); 
-define('SMTP_PASS', getenv('SMTP_PASS') ?: 'mmff wisd iqtb ayoz'); 
+define('SMTP_USER', getenv('SMTP_USER') ?: '');
+define('SMTP_PASS', getenv('SMTP_PASS') ?: '');
 
 // Fast2SMS API Key
 define('FAST2SMS_KEY', getenv('FAST2SMS_KEY') ?: '');
 
-// Twilio WhatsApp Configuration
+// Twilio Configuration
 define('TWILIO_SID', getenv('TWILIO_SID') ?: '');
 define('TWILIO_TOKEN', getenv('TWILIO_TOKEN') ?: '');
 define('TWILIO_WHATSAPP_FROM', getenv('TWILIO_WHATSAPP_FROM') ?: '');
+define('TWILIO_SMS_FROM', getenv('TWILIO_SMS_FROM') ?: '');
 
 // Infobip Configuration
 define('INFOBIP_API_KEY', getenv('INFOBIP_API_KEY') ?: '');
@@ -36,7 +37,7 @@ define('FCM_SERVER_KEY', getenv('FCM_SERVER_KEY') ?: '');
 // ----------------------
 
 function sendEmailNotification($toEmail, $subject, $body) {
-    if (SMTP_USER === 'your-email@gmail.com') {
+    if (empty(SMTP_USER) || empty(SMTP_PASS)) {
         // Fallback to log if not configured
         error_log("Email to $toEmail NOT SENT: Gmail not configured in notification_helper.php");
         return false;
@@ -193,7 +194,7 @@ function sendInfobipSMS($toPhone, $message) {
  * Fallback SMS via Twilio
  */
 function sendTwilioSMS($toPhone, $message) {
-    if (empty(TWILIO_SID)) {
+    if (empty(TWILIO_SID) || empty(TWILIO_TOKEN)) {
          return false;
     }
     $log_file = dirname(__FILE__) . '/notification_log.txt';
@@ -201,7 +202,7 @@ function sendTwilioSMS($toPhone, $message) {
     
     $to = (strpos($toPhone, '+') === 0 ? $toPhone : "+91" . $toPhone);
     $url = "https://api.twilio.com/2010-04-01/Accounts/" . TWILIO_SID . "/Messages.json";
-    $data = array('From' => '+18149830541', 'To' => $to, 'Body' => $message); // Use your Twilio SMS number
+    $data = array('From' => TWILIO_SMS_FROM, 'To' => $to, 'Body' => $message); // Use your Twilio SMS number
 
     $curl = curl_init($url);
     curl_setopt($curl, CURLOPT_POST, true);
@@ -225,7 +226,7 @@ function sendWhatsAppNotification($toPhone, $message) {
     file_put_contents($log_file, $log_entry, FILE_APPEND);
 
     // 2. CHECK IF TWILIO IS CONFIGURED
-    if (empty(TWILIO_SID)) {
+    if (empty(TWILIO_SID) || empty(TWILIO_TOKEN)) {
         return true; // Just logged if not configured
     }
 
@@ -353,4 +354,56 @@ function sendPushNotification($toToken, $title, $body) {
         return false;
     }
     return true;
+}
+
+/**
+ * Broadcast critical stock alerts to all compatible available donors
+ */
+function broadcastStockAlert($conn, $hospital_id, $blood_group) {
+    if (!$conn) return false;
+
+    // 1. Fetch Hospital Name
+    $h_stmt = $conn->prepare("SELECT name FROM hospitals WHERE hospital_id = ?");
+    $h_stmt->execute([$hospital_id]);
+    $h_name = $h_stmt->fetchColumn();
+    if (!$h_name) return false;
+
+    // 2. Fetch compatible available donors
+    $stmt = $conn->prepare("SELECT name, email, phone, fcm_token FROM users WHERE blood_group = ? AND availability_status = 'Available' AND role = 'donor'");
+    $stmt->execute([$blood_group]);
+    $donors = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $message = "📢 <b>URGENT: BLOOD STOCK LOW</b>\n$h_name is critically low on <b>$blood_group</b> blood. If you are eligible, please visit the hospital or check your dashboard for details. Your help is needed! 🙏";
+    
+    // 3. Telegram Broadcast
+    sendTelegramNotification($message);
+
+    $count = 0;
+    foreach($donors as $d) {
+        $donor_msg = "💉 Stock Request: $h_name needs $blood_group blood urgently. If you are eligible, please visit the hospital or check your dashboard. Your help is needed! 🙏";
+        
+        // Push
+        if(!empty($d['fcm_token'])) {
+            sendPushNotification($d['fcm_token'], "💉 Stock Request: $blood_group", "$h_name needs $blood_group blood urgently.");
+        }
+        
+        // SMS & WhatsApp
+        if(!empty($d['phone'])) {
+            sendSMSNotification($d['phone'], $donor_msg);
+            sendWhatsAppNotification($d['phone'], $donor_msg);
+        }
+
+        // Email
+        if(!empty($d['email'])) {
+            $email_body = "<h3>Urgent Blood Stock Request</h3>
+                          <p>Hello <b>" . htmlspecialchars($d['name']) . "</b>,</p>
+                          <p><b>" . htmlspecialchars($h_name) . "</b> is critically low on <b>$blood_group</b> blood.</p>
+                          <p>If you are eligible and available to donate, please visit the hospital or check your dashboard for more details.</p>
+                          <hr>
+                          <p><small>Automated alert from Bishop Heber College Blood Finder.</small></p>";
+            sendEmailNotification($d['email'], "Urgent: $blood_group Blood Needed at $h_name", $email_body);
+        }
+        $count++;
+    }
+    return $count;
 }

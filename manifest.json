@@ -1,6 +1,6 @@
 {
-  "name": "BHC Blood SOS",
-  "short_name": "BloodSOS",
+  "name": "Community-Based Emergency Blood Donor Finder System",
+  "short_name": "BHC Blood SOS",
   "description": "Progressive Web App for Community Blood Donor Finder at Bishop Heber College.",
   "start_url": "/community/index.php",
   "display": "standalone",

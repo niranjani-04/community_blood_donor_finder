@@ -38,22 +38,37 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 throw new Exception("Units cannot be negative!");
             }
 
+            require_once '../backend/notification_helper.php';
+
             // Check if stock entry exists
-            $check = $conn->prepare("SELECT stock_id FROM blood_inventory WHERE hospital_id = ? AND blood_group = ?");
+            $check = $conn->prepare("SELECT stock_id, units FROM blood_inventory WHERE hospital_id = ? AND blood_group = ?");
             $check->execute([$hospital_id, $blood_group]);
             
             if ($check->rowCount() > 0) {
                 // Update existing
+                $existing = $check->fetch(PDO::FETCH_ASSOC);
+                $old_units = (int)($existing['units'] ?? 0);
+                
                 $sql = "UPDATE blood_inventory SET units = ? WHERE hospital_id = ? AND blood_group = ?";
                 $stmt = $conn->prepare($sql);
                 $stmt->execute([$units, $hospital_id, $blood_group]);
                 $message = "Stock updated successfully!";
+                
+                if ($units < 3) {
+                    broadcastStockAlert($conn, $hospital_id, $blood_group);
+                    $message .= " (Low stock alert broadcasted)";
+                }
             } else {
                 // Insert new
                 $sql = "INSERT INTO blood_inventory (hospital_id, blood_group, units) VALUES (?, ?, ?)";
                 $stmt = $conn->prepare($sql);
                 $stmt->execute([$hospital_id, $blood_group, $units]);
                 $message = "New stock entry added successfully!";
+                
+                if ($units < 3 && $units > 0) {
+                    broadcastStockAlert($conn, $hospital_id, $blood_group);
+                    $message .= " (Low stock alert broadcasted)";
+                }
             }
             $message_type = "success";
         }

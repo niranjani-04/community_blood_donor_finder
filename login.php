@@ -11,7 +11,7 @@ $testimonials = $conn->query("SELECT * FROM testimonials WHERE status = 'approve
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Login - Community Blood Donor Finder</title>
+    <title>Login - Community-Based Emergency Blood Donor Finder System</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- PWA Manifest -->
     <link rel="manifest" href="manifest.json">
@@ -184,6 +184,34 @@ $testimonials = $conn->query("SELECT * FROM testimonials WHERE status = 'approve
         .input-group {
             position: relative;
             margin-bottom: 24px;
+        }
+
+        /* Input validation error */
+        .input-error-msg {
+            display: none;
+            margin-top: 8px;
+            padding: 10px 16px;
+            background: rgba(255, 45, 85, 0.12);
+            border: 1px solid rgba(255, 45, 85, 0.35);
+            border-radius: 12px;
+            color: #ff6b8a;
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-align: left;
+            line-height: 1.4;
+            animation: fadeInDown 0.3s ease;
+        }
+        .input-error-msg i {
+            margin-right: 6px;
+            color: #ff2d55;
+        }
+        @keyframes fadeInDown {
+            from { opacity: 0; transform: translateY(-6px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .form-input.is-invalid {
+            border-color: rgba(255, 45, 85, 0.7) !important;
+            box-shadow: 0 0 14px rgba(255, 45, 85, 0.25) !important;
         }
 
         .form-input {
@@ -377,21 +405,26 @@ $testimonials = $conn->query("SELECT * FROM testimonials WHERE status = 'approve
         </div>
         
         <div class="login-header">
-            <h1 class="hero-title text-gradient">Community Blood<br>Donor Finder</h1>
+            <h1 class="hero-title text-gradient" style="font-size: 1.8rem;">Community-Based Emergency Blood<br>Donor Finder System</h1>
             <p class="hero-subtitle">Bishop Heber College</p>
         </div>
         
-        <form action="backend/auth_login.php" method="POST">
+        <form action="backend/auth_login.php" method="POST" id="loginForm">
             <div class="input-group">
                 <input 
                     type="text" 
                     name="register_number" 
+                    id="register_number"
                     class="form-input" 
-                    placeholder="Register Number" 
+                    placeholder="Register Number (e.g. 21UCS001)" 
                     required
                     autocomplete="off"
                 >
                 <i class="fas fa-id-card input-icon"></i>
+                <div class="input-error-msg" id="reg-error">
+                    <i class="fas fa-triangle-exclamation"></i>
+                    <strong>This looks like a name.</strong> Please enter your <strong>Register Number</strong> (e.g., <em>21UCS001</em>), not your full name.
+                </div>
             </div>
             
             <div class="input-group">
@@ -428,6 +461,10 @@ $testimonials = $conn->query("SELECT * FROM testimonials WHERE status = 'approve
         <div class="login-footer">
             <span class="footer-msg">Official Donor Portal Access</span>
             <div class="d-flex flex-column gap-2">
+                <a href="activate.php" class="admin-link" style="background: rgba(255, 45, 85, 0.1); border-color: rgba(255, 45, 85, 0.3); color: #ff2d55; font-weight: 700;">
+                    <i class="fas fa-id-card"></i>
+                    New Donor? Activate Account
+                </a>
                 <a href="admin/index.php" class="admin-link">
                     <i class="fas fa-user-shield"></i>
                     Administrator Login
@@ -443,10 +480,89 @@ $testimonials = $conn->query("SELECT * FROM testimonials WHERE status = 'approve
     <script>
         window.onload = function() {
             const urlParams = new URLSearchParams(window.location.search);
-            if (urlParams.get('status') === 'invalid_credentials') {
-                alert("Invalid Record: Please check your Register Number or DOB.");
+            const status = urlParams.get('status');
+
+            if (status === 'invalid_format') {
+                showToast(
+                    '<i class="fas fa-triangle-exclamation" style="margin-right:8px;"></i>' +
+                    '<strong>Invalid Format:</strong> Please enter your <strong>Register Number</strong> (e.g., <em>21UCS001</em>), not your name.',
+                    'error'
+                );
+                // Also highlight the input
+                const regInput = document.getElementById('register_number');
+                if (regInput) {
+                    regInput.classList.add('is-invalid');
+                    document.getElementById('reg-error').style.display = 'block';
+                }
+            } else if (status === 'invalid_credentials') {
+                showToast(
+                    '<i class="fas fa-circle-xmark" style="margin-right:8px;"></i>' +
+                    'Invalid Register Number or Date of Birth. Please check your details.',
+                    'error'
+                );
             }
         };
+
+        // ── Toast Notification ──────────────────────────────────────────
+        function showToast(msg, type) {
+            const toast = document.createElement('div');
+            toast.innerHTML = msg;
+            Object.assign(toast.style, {
+                position: 'fixed',
+                top: '24px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: type === 'error'
+                    ? 'linear-gradient(135deg,rgba(255,45,85,0.95),rgba(180,20,50,0.95))'
+                    : 'rgba(0,200,120,0.9)',
+                color: '#fff',
+                padding: '14px 24px',
+                borderRadius: '16px',
+                fontSize: '0.95rem',
+                fontWeight: '500',
+                zIndex: '9999',
+                maxWidth: '90vw',
+                textAlign: 'center',
+                boxShadow: '0 8px 30px rgba(0,0,0,0.4)',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255,255,255,0.12)',
+                animation: 'fadeInDown 0.4s ease',
+                lineHeight: '1.5'
+            });
+            document.body.appendChild(toast);
+            setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.5s'; }, 4500);
+            setTimeout(() => toast.remove(), 5000);
+        }
+
+        // ── Client-side Register Number Format Validation ───────────────
+        const regInput  = document.getElementById('register_number');
+        const regError  = document.getElementById('reg-error');
+        const loginForm = document.getElementById('loginForm');
+
+        function looksLikeName(val) {
+            // If value contains only letters, spaces, dots — it's likely a name
+            return /^[a-zA-Z\s\.]+$/.test(val.trim()) && val.trim().length > 1;
+        }
+
+        regInput.addEventListener('input', function() {
+            if (looksLikeName(this.value)) {
+                this.classList.add('is-invalid');
+                regError.style.display = 'block';
+            } else {
+                this.classList.remove('is-invalid');
+                regError.style.display = 'none';
+            }
+        });
+
+        loginForm.addEventListener('submit', function(e) {
+            if (looksLikeName(regInput.value)) {
+                e.preventDefault();
+                regInput.classList.add('is-invalid');
+                regError.style.display = 'block';
+                regInput.focus();
+                regInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        });
 
         const stream = document.getElementById('bloodStream');
         const count = 25;

@@ -56,6 +56,14 @@ $stmt_sos = $conn->prepare("SELECT alert_id, blood_group FROM sos_alerts WHERE r
 $stmt_sos->execute([$user_id]);
 $my_active_alert = $stmt_sos->fetch(PDO::FETCH_ASSOC);
 
+// Check for live responses to the active alert
+$active_response_count = 0;
+if ($my_active_alert) {
+    $stmt_res_count = $conn->prepare("SELECT COUNT(*) FROM sos_responses WHERE alert_id = ? AND status = 'accepted'");
+    $stmt_res_count->execute([$my_active_alert['alert_id']]);
+    $active_response_count = $stmt_res_count->fetchColumn();
+}
+
 // Fetch Stats for User
 if ($role == 'donor') {
     $my_donations = $conn->query("SELECT COUNT(*) FROM donation_history WHERE donor_id = $user_id")->fetchColumn();
@@ -93,7 +101,7 @@ if ($role == 'donor') {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Community Blood Donor Finder - Bishop Heber College</title>
+    <title>Community-Based Emergency Blood Donor Finder System for Bishop Heber College</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <!-- PWA Manifest -->
     <link rel="manifest" href="manifest.json">
@@ -804,6 +812,80 @@ if ($role == 'donor') {
             border-color: var(--primary) !important;
             box-shadow: 0 20px 40px -10px rgba(255, 45, 85, 0.2);
         }
+
+        /* --- Global Tracking Notification --- */
+        .tracking-widget {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 2000;
+            background: rgba(20, 20, 25, 0.95);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 20px;
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.5);
+            animation: slideUp 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            cursor: pointer;
+            text-decoration: none !important;
+            max-width: 320px;
+        }
+
+        .tracking-widget:hover {
+            transform: translateY(-5px);
+            background: rgba(30,30,35,0.98);
+            border-color: #10b981;
+        }
+
+        .tracking-widget .ping-icon {
+            width: 45px;
+            height: 45px;
+            background: rgba(16, 185, 129, 0.1);
+            color: #10b981;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+            position: relative;
+        }
+
+        .tracking-widget .ping-ring {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            opacity: 0;
+            animation: widget-pulse 2s infinite;
+        }
+
+        @keyframes widget-pulse {
+            0% { transform: scale(1); opacity: 0.6; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(100px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .tracking-widget .info-text h6 {
+            color: #fff;
+            font-weight: 700;
+            font-size: 0.85rem;
+            margin: 0;
+            letter-spacing: 0.5px;
+        }
+
+        .tracking-widget .info-text p {
+            color: #94a3b8;
+            font-size: 0.75rem;
+            margin: 0;
+        }
     </style>
 </head>
 <body>
@@ -831,7 +913,7 @@ if ($role == 'donor') {
         <a href="#" class="brand-text">
             <div class="d-flex align-items-center mb-1">
                 <i class="fas fa-heartbeat text-danger me-2"></i>
-                <span style="font-size: 0.9em;">Community Blood Donor Finder</span>
+                <span style="font-size: 0.9em;">Community-Based Emergency Blood Donor Finder System</span>
             </div>
             <small class="text-secondary fw-normal" style="font-size: 0.65em; padding-left: 28px; text-transform: uppercase; letter-spacing: 1px;">Bishop Heber College</small>
         </a>
@@ -941,6 +1023,18 @@ if ($role == 'donor') {
 
     <!-- CONTENT BODY (Overlaps Hero) -->
     <div class="content-body">
+    
+    <?php if ($role == 'donor' && $u['is_activated'] == 0): ?>
+    <div class="alert alert-danger border-0 shadow-lg rounded-4 p-4 mb-5 d-flex align-items-center" style="background: rgba(255, 45, 85, 0.1); backdrop-filter: blur(10px); border: 1px solid rgba(255, 45, 85, 0.3) !important;">
+        <div class="rounded-circle bg-danger p-3 me-4 text-white shadow">
+            <i class="fas fa-shield-halved fa-2x"></i>
+        </div>
+        <div>
+            <h4 class="alert-heading fw-bold text-white mb-1">Security Activation Required</h4>
+            <p class="mb-0 text-white-50">Your account is currently in <b>"Restricted Mode"</b>. You can view hospitals and camps, but cannot accept SOS alerts or request blood until an administrator activates your account. This is a security measure to ensure donor authenticity.</p>
+        </div>
+    </div>
+    <?php endif; ?>
     
     <?php 
     // Determine which page to show
@@ -1135,9 +1229,36 @@ if ($role == 'donor') {
                         <div class="sos-status-line mb-4">
                             <div class="status-pill active"><i class="fas fa-envelope"></i> Email</div>
                             <div class="status-pill active"><i class="fas fa-bell"></i> Push</div>
+                            <div class="status-pill active"><i class="fab fa-telegram"></i> Telegram</div>
+                            <div id="gps-status-pill" class="status-pill cursor-pointer" onclick="$('#gps-diagnostics').toggleClass('hidden')"><i class="fas fa-location-crosshairs"></i> GPS: Waiting</div>
+                            <button type="button" onclick="refreshGPS()" class="btn btn-xs btn-outline-secondary rounded-pill px-2 py-0 text-xs border-opacity-25" style="pointer-events: auto;">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+
+                        <!-- GPS DIAGNOSTIC PANEL (HIDDEN) -->
+                        <div id="gps-diagnostics" class="mb-4 p-3 bg-black bg-opacity-50 border border-white border-opacity-10 rounded-4 text-xs hidden">
+                            <div class="d-flex justify-content-between mb-2">
+                                <span class="text-secondary">Coordinates:</span>
+                                <span id="diag-latlng" class="text-white mono">--</span>
+                            </div>
+                            <div class="d-flex justify-content-between mb-2">
+                                <span class="text-secondary">Accuracy:</span>
+                                <span id="diag-accuracy" class="text-white">--</span>
+                            </div>
+                            <div class="d-flex justify-content-between">
+                                <span class="text-secondary">Last Sync:</span>
+                                <span id="diag-time" class="text-white">--</span>
+                            </div>
                         </div>
 
                         <h2 class="mb-2 fw-bold text-white">Emergency Dispatch</h2>
+                        <div id="sos_map_preview" class="mb-3 border border-danger border-opacity-10" style="height: 200px; width: 100%; border-radius: 20px; z-index: 0; display: none;"></div>
+                        
+                        <div id="location-meta" class="d-flex justify-content-between align-items-center mb-3 px-1">
+                            <p id="sos_address" class="text-xs text-secondary mb-0"><i class="fas fa-map-marker-alt me-1"></i> Waiting for precise location lock...</p>
+                            <span id="gps-accuracy" class="badge bg-black bg-opacity-50 text-secondary fw-normal text-xs border border-white border-opacity-10 hidden">--m</span>
+                        </div>
                         <p class="text-secondary mb-4">Tap to broadcast an instant emergency alert to nearby donors.</p>
                         
                         <form id="sosForm" onsubmit="event.preventDefault(); triggerSOS();">
@@ -1187,11 +1308,29 @@ if ($role == 'donor') {
                                     </div>
 
                                     <hr>
-                                    <a href="track.php?alert_id=<?php echo $my_active_alert['alert_id']; ?>" class="btn btn-warning btn-lg w-100 fw-bold rounded-pill">
-                                        <i class="fas fa-map-marked-alt me-2"></i> Open GPS Fleet Tracker
-                                    </a>
+                                    <div class="d-flex flex-column gap-2">
+                                        <a href="track.php?alert_id=<?php echo $my_active_alert['alert_id']; ?>" class="btn btn-warning btn-lg w-100 fw-bold rounded-pill">
+                                            <i class="fas fa-map-marked-alt me-2"></i> Open GPS Fleet Tracker
+                                        </a>
+                                        <button onclick="cancelMyAlert(<?php echo $my_active_alert['alert_id']; ?>)" class="btn btn-outline-danger btn-sm w-100 rounded-pill py-2 mt-2">
+                                            <i class="fas fa-times me-1"></i> Cancel Emergency Alert
+                                        </button>
+                                    </div>
                                     
                                     <script>
+                                        function cancelMyAlert(alertId) {
+                                            if(confirm("Are you sure you want to cancel this SOS alert? This will notify all on-the-way donors that help is no longer required.")) {
+                                                $.post('backend/sos_cancel.php', { alert_id: alertId }, function(res) {
+                                                    if(res.status === 'success') {
+                                                        alert(res.message);
+                                                        window.location.reload();
+                                                    } else {
+                                                        alert("Error: " + res.message);
+                                                    }
+                                                }, 'json');
+                                            }
+                                        }
+
                                         $(document).ready(function() {
                                             const alertId = <?php echo $my_active_alert['alert_id']; ?>;
                                             const acceptorTicker = setInterval(function() {
@@ -1542,6 +1681,8 @@ if ($role == 'donor') {
     var userLat = null;
     var userLng = null;
     var gpsReady = false;
+    var isActivated = <?= (int)$u['is_activated'] ?>;
+    var currentPage = "<?= $current_page ?>";
     var filterNearbyOnly = false;
 
     // Tab Navigation Logic
@@ -1570,11 +1711,85 @@ if ($role == 'donor') {
         // URL-based navigation - no JavaScript needed for link handling!
         // PHP handles showing/hiding sections based on $_GET['page']
         
-        // Page-specific initialization
-        let currentPage = "<?php echo $current_page; ?>";
-        if(currentPage === 'hospitals') {
+        if(currentPage === 'sos') {
+            setTimeout(initSOSPreviewMap, 500);
+        }
+        if(currentPage === 'hospitals' && role === 'donor') {
             setTimeout(initHospitalMap, 500); 
             renderHospitals();
+        }
+
+        // SSL CHECK FOR GEOLOCATION PRECISION
+        if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+            $('#page-header').append('<div class="alert alert-warning text-xs py-1 mt-2 mb-0 border-0 rounded-pill"><i class="fas fa-shield-alt me-1"></i> HTTP Warning: GPS precision may be limited on insecure connections.</div>');
+        }
+
+        var sosPreviewMap = null;
+        var sosPreviewMarker = null;
+        var sosAccuracyCircle = null;
+
+        function initSOSPreviewMap() {
+            if(!$('#sos_map_preview').length) return;
+            sosPreviewMap = L.map('sos_map_preview', { zoomControl: false, attributionControl: false }).setView([10.8211, 78.6934], 14);
+            L.tileLayer('https://{s}.tile.osm.org/{z}/{x}/{y}.png').addTo(sosPreviewMap);
+        }
+
+        function updateSOSPreviewMap(lat, lng, accuracy = null) {
+            if(!sosPreviewMap) return;
+            $('#sos_map_preview').show();
+            sosPreviewMap.invalidateSize();
+            sosPreviewMap.setView([lat, lng], 16);
+            
+            if(sosPreviewMarker) {
+                sosPreviewMarker.setLatLng([lat, lng]);
+            } else {
+                sosPreviewMarker = L.marker([lat, lng]).addTo(sosPreviewMap);
+            }
+
+            if(accuracy) {
+                $('#gps-accuracy').removeClass('hidden').text(Math.round(accuracy) + 'm accuracy');
+                if(accuracy < 30) $('#gps-accuracy').removeClass('text-secondary text-info').addClass('text-success');
+                else if(accuracy < 100) $('#gps-accuracy').removeClass('text-secondary text-success').addClass('text-info');
+                else $('#gps-accuracy').removeClass('text-success text-info').addClass('text-warning');
+
+                // Update Accuracy Circle
+                if(sosAccuracyCircle) {
+                    sosAccuracyCircle.setLatLng([lat, lng]);
+                    sosAccuracyCircle.setRadius(accuracy);
+                } else {
+                    sosAccuracyCircle = L.circle([lat, lng], {
+                        radius: accuracy,
+                        color: '#ff2d55',
+                        fillColor: '#ff2d55',
+                        fillOpacity: 0.1,
+                        weight: 1
+                    }).addTo(sosPreviewMap);
+                }
+            }
+
+            // Reverse Geocode
+            $.get(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`, function(data) {
+                if(data.display_name) {
+                    var addr = data.display_name.split(',').slice(0, 4).join(',');
+                    $('#sos_address').html('<i class="fas fa-map-marker-alt text-success me-1"></i> ' + addr);
+                }
+            });
+        }
+
+        function refreshGPS() {
+            $('#gps-status-pill').removeClass('active').html('<i class="fas fa-spinner fa-spin me-1"></i> Syncing...');
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(function(position) {
+                    userLat = position.coords.latitude;
+                    userLng = position.coords.longitude;
+                    gpsReady = true;
+                    updateUserMarker();
+                    if(currentPage === 'sos') updateSOSPreviewMap(userLat, userLng, position.coords.accuracy);
+                    $('#gps-status-pill').addClass('active').html('<i class="fas fa-location-crosshairs"></i> GPS: Locked');
+                }, function(e) { 
+                    alert("GPS Error: " + e.message);
+                }, { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 });
+            }
         }
         
         // Smooth scroll to content body for any sub-page
@@ -1584,20 +1799,77 @@ if ($role == 'donor') {
         
         // GPS & Alerts Logic
         
+        function updateGPSDiagnostics(pos) {
+            const acc = pos.coords.accuracy;
+            const ts = new Date(pos.timestamp).toLocaleTimeString();
+            $('#diag-latlng').text(pos.coords.latitude.toFixed(6) + ', ' + pos.coords.longitude.toFixed(6));
+            $('#diag-accuracy').text(Math.round(acc) + ' m');
+            $('#diag-time').text(ts);
+            
+            if(acc > 500) {
+                $('#gps-status-pill').removeClass('text-success text-info').addClass('text-warning');
+            } else {
+                $('#gps-status-pill').removeClass('text-warning');
+            }
+        }
+
         if ("geolocation" in navigator) {
+            // Get initial position quickly
+            navigator.geolocation.getCurrentPosition(function(position) {
+                // Ignore very rough initial locations (e.g. ISP guesses > 5km)
+                if(position.coords.accuracy > 5000) return;
+
+                userLat = position.coords.latitude;
+                userLng = position.coords.longitude;
+                gpsReady = true;
+                updateUserMarker(position.coords.accuracy);
+                updateGPSDiagnostics(position);
+                
+                if(typeof renderHospitals === 'function' && currentPage === 'hospitals') renderHospitals();
+                
+                // Update UI Pill
+                $('#gps-status-pill').addClass('active').html('<i class="fas fa-location-crosshairs"></i> GPS: Locked');
+            }, function(e) { 
+                console.log("Initial GPS Error:", e); 
+                $('#gps-status-pill').removeClass('active').html('<i class="fas fa-location-crosshairs"></i> GPS: Error');
+            }, { enableHighAccuracy: true });
+
+            // Watch for changes with high accuracy
             navigator.geolocation.watchPosition(function(position) {
+                // Reject updates with extremely low accuracy if we already have a lock
+                if(gpsReady && position.coords.accuracy > 1000) {
+                    console.log("Ignoring low accuracy update:", position.coords.accuracy);
+                    return;
+                }
+
                 userLat = position.coords.latitude;
                 userLng = position.coords.longitude;
                 gpsReady = true;
                 
                 // Update User Marker on Map
-                updateUserMarker();
+                updateUserMarker(position.coords.accuracy);
+                updateGPSDiagnostics(position);
 
                 // If we are on hospitals tab, re-render list to show distance
                 if(!document.getElementById('view-hospitals').classList.contains('hidden')) {
                     if(typeof renderHospitals === 'function') renderHospitals();
                 }
-            }, function(error) { console.log(error); });
+
+                // Update UI Pill
+                $('#gps-status-pill').addClass('active').html('<i class="fas fa-location-crosshairs"></i> GPS: Locked');
+                
+                // Update SOS Preview Map if on SOS page
+                if(currentPage === 'sos') {
+                    updateSOSPreviewMap(userLat, userLng, position.coords.accuracy);
+                }
+            }, function(error) { 
+                console.log("WatchPosition Error:", error); 
+                $('#gps-status-pill').removeClass('active').html('<i class="fas fa-location-crosshairs"></i> GPS: Error');
+            }, { 
+                enableHighAccuracy: true, 
+                timeout: 5000, 
+                maximumAge: 0 
+            });
         }
         
         // Polling
@@ -1623,8 +1895,12 @@ if ($role == 'donor') {
         });
     }
 
-    function triggerSOS() {
-         document.getElementById('dispatchSound').play().catch(e => {});
+    async function triggerSOS() {
+         if (!isActivated) {
+             alert("Your donor account is not yet activated for security reasons. You cannot broadcast emergency alerts. Please contact administration.");
+             return;
+         }
+
          var bg = $('#blood_group').val();
          var outputDiv = document.getElementById("sos-status");
          
@@ -1634,8 +1910,64 @@ if ($role == 'donor') {
             setTimeout(() => $('#blood_group').removeClass('is-invalid'), 2000);
             return; 
          }
-         
+
+         document.getElementById('dispatchSound').play().catch(e => {});
+
          // Professional Dispatching State
+         outputDiv.innerHTML = `
+            <div class="mt-4 p-4 border border-danger border-opacity-25 rounded bg-dark">
+                <div class="spinner-grow text-danger mb-3" role="status"></div>
+                <h5 class="text-white fw-bold mb-3">Fetching High-Accuracy Location...</h5>
+                <p id="sos-dispatch-status" class="text-secondary text-xs">Waiting for a precise signal (under 50m) to ensure donors find you correctly.</p>
+                <div id="sos-dispatch-progress" class="mt-3 hidden">
+                    <button onclick="dispatchWithCurrentApprox()" class="btn btn-xs btn-outline-warning rounded-pill px-3">Use Current (Approximate) Pin</button>
+                </div>
+            </div>
+         `;
+         
+         // Phase 1: Wait for a high-accuracy lock
+         let waitStart = Date.now();
+         let checkInterval = setInterval(async () => {
+             let elapsed = (Date.now() - waitStart) / 1000;
+             
+             // Try to get a fresh position during the wait
+             if ("geolocation" in navigator) {
+                 navigator.geolocation.getCurrentPosition(pos => {
+                     userLat = pos.coords.latitude;
+                     userLng = pos.coords.longitude;
+                     gpsReady = true;
+                     updateGPSDiagnostics(pos);
+                     updateSOSPreviewMap(userLat, userLng, pos.coords.accuracy);
+                 }, null, {enableHighAccuracy: true});
+             }
+
+             // Check current accuracy
+             let currentAccuracy = parseFloat($('#diag-accuracy').text()) || 1000;
+             
+             if(currentAccuracy < 50) {
+                 clearInterval(checkInterval);
+                 proceedWithDispatch();
+             } else if(elapsed > 8) {
+                 // After 8 seconds, show "approximate" option
+                 $('#sos-dispatch-progress').removeClass('hidden');
+                 $('#sos-dispatch-status').html(`<span class="text-warning">Weak Signal (${Math.round(currentAccuracy)}m).</span> Move to an open area or proceed with approximate pin.`);
+             }
+
+             if(elapsed > 15) {
+                 clearInterval(checkInterval);
+                 proceedWithDispatch(); // Final timeout fallback
+             }
+         }, 1000);
+
+         function dispatchWithCurrentApprox() {
+             clearInterval(checkInterval);
+             proceedWithDispatch();
+         }
+
+         function proceedWithDispatch() {
+             // Re-capture blood group as it might have changed
+             var bg = $('#blood_group').val();
+
          outputDiv.innerHTML = `
             <div class="mt-4 p-4 border border-danger border-opacity-25 rounded bg-dark">
                 <div class="spinner-grow text-danger mb-3" role="status"></div>
@@ -1648,9 +1980,26 @@ if ($role == 'donor') {
          `;
          
          // Fallback lat/lng if not ready
-         if(!userLat) { userLat = 10.8211; userLng = 78.6934; } 
+         let isDefaultLocation = false;
+         if(!userLat) { 
+             userLat = 10.8211; 
+             userLng = 78.6934; 
+             isDefaultLocation = true;
+         } 
+         
+         // Post with location name if available
+         var locName = $('#sos_address').text().replace('GPS not ready, using default location', '').trim();
+         if(!locName || locName.includes('Waiting') || isDefaultLocation) {
+             locName = "Emergency Dispatch at (" + userLat.toFixed(4) + ", " + userLng.toFixed(4) + ")";
+             if(isDefaultLocation) locName = "Bishop Heber College (GPS Unavailable)";
+         }
 
-         $.post('backend/sos_create.php', { blood_group: bg, latitude: userLat, longitude: userLng }, function(res) {
+         $.post('backend/sos_create.php', { 
+            blood_group: bg, 
+            latitude: userLat, 
+            longitude: userLng,
+            location_name: locName
+        }, function(res) {
             try {
                 var data = JSON.parse(res);
                 if(data.status === 'success') {
@@ -1714,7 +2063,8 @@ if ($role == 'donor') {
                 outputDiv.innerHTML = '<div class="alert alert-danger mt-4 border-2"><b>Critical System Error:</b> The emergency server returned an invalid response. Contact Admin.</div>';
             }
          });
-    }
+    } // End of proceedWithDispatch
+} // End of triggerSOS
 
     // Hospital Search & Render Logic
     var map;
@@ -1762,7 +2112,9 @@ if ($role == 'donor') {
         updateUserMarker();
     }
 
-    function updateUserMarker() {
+    var userAccuracyCircle = null;
+
+    function updateUserMarker(accuracy = null) {
         if(!map || !userLat || !userLng) return;
         
         if(userMarker) {
@@ -1781,6 +2133,21 @@ if ($role == 'donor') {
             // Fit bounds to include user and hospitals
             var group = new L.featureGroup([...hospitalMarkers, userMarker]);
             map.fitBounds(group.getBounds().pad(0.1));
+        }
+
+        if(accuracy) {
+            if(userAccuracyCircle) {
+                userAccuracyCircle.setLatLng([userLat, userLng]);
+                userAccuracyCircle.setRadius(accuracy);
+            } else {
+                userAccuracyCircle = L.circle([userLat, userLng], {
+                    radius: accuracy,
+                    color: '#3b82f6',
+                    fillColor: '#3b82f6',
+                    fillOpacity: 0.1,
+                    weight: 1
+                }).addTo(map);
+            }
         }
     }
 
@@ -1944,20 +2311,30 @@ if ($role == 'donor') {
         }
     });
 
-    function acceptRequest(alertId) {
+    function acceptRequest(btn, alertId) {
+        if (!isActivated) {
+            alert("Security Alert: Your donor account must be activated by an administrator before you can respond to emergencies.");
+            return;
+        }
         if(!confirm("Are you sure you want to accept this request and share your live location?")) return;
         
+        // Disable button to prevent double-click
+        var originalHtml = $(btn).html();
+        $(btn).prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i> Accepting...');
+
         $.post('backend/sos_accept.php', { alert_id: alertId }, function(data) {
             try {
                 var resp = JSON.parse(data);
                 if(resp.status === 'success') {
-                    // Redirect immediately without annoying popups
+                    // Redirect immediately
                     window.location.href = 'track.php?alert_id=' + resp.alert_id;
                 } else {
-                    console.error("Acceptance Failed:", resp.message);
+                    alert("Acceptance Failed: " + resp.message);
+                    $(btn).prop('disabled', false).html(originalHtml);
                 }
             } catch(e) {
                 console.error("Network or Parse Error during SOS acceptance");
+                $(btn).prop('disabled', false).html(originalHtml);
             }
         });
     }
@@ -2241,7 +2618,57 @@ if ($role == 'donor') {
         document.getElementById('idCardModal').classList.remove('active');
     }
     </script>
-</body>
-</html>
+
+    <!-- GLOBAL TRACKING WIDGET (Shows only when someone accepted the requester's SOS) -->
+    <?php if ($my_active_alert && $active_response_count > 0): ?>
+    <a href="track.php?alert_id=<?php echo $my_active_alert['alert_id']; ?>" class="tracking-widget">
+        <div class="ping-icon">
+            <div class="ping-ring"></div>
+            <i class="fas fa-map-marked-alt"></i>
+        </div>
+        <div class="info-text">
+            <h6>Donor is on the way!</h6>
+            <p><?php echo $active_response_count; ?> person(s) responding • Tap to track</p>
+        </div>
+        <i class="fas fa-chevron-right ms-auto text-secondary" style="font-size: 0.8rem;"></i>
+    </a>
+    <?php endif; ?>
+
+    <script>
+        // Check for new responses periodically if an alert is active but no acceptor yet
+        <?php if ($my_active_alert && $active_response_count == 0): ?>
+        setInterval(function() {
+            $.get('backend/fetch_acceptors.php?alert_id=<?php echo $my_active_alert['alert_id']; ?>', function(res) {
+                const acceptors = JSON.parse(res);
+                if(acceptors.length > 0) {
+                    // Someone just accepted! Refresh to show the widget
+                    window.location.reload();
+                }
+            });
+        }, 5000);
+        <?php endif; ?>
+
+        // Real-time Geolocation for Donors
+        <?php if($role == 'donor'): ?>
+        if ("geolocation" in navigator) {
+            navigator.geolocation.watchPosition(
+                function(p) {
+                    $.post('backend/update_location.php', { 
+                        latitude: p.coords.latitude, 
+                        longitude: p.coords.longitude 
+                    }, function(res) {
+                        console.log("Location Synced:", res);
+                    });
+                }, 
+                function(e) { console.error("Geolocation Error:", e); },
+                { 
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0
+                }
+            );
+        }
+        <?php endif; ?>
+    </script>
 </body>
 </html>

@@ -48,10 +48,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
         // Generate OTP
         $otp = rand(100000, 999999);
-        $expires = date('Y-m-d H:i:s', strtotime('+5 minutes'));
         
-        $log_stmt = $conn->prepare("INSERT INTO admin_auth_log (user_id, otp, expires_at) VALUES (?, ?, ?)");
-        $log_stmt->execute([$real_id, $otp, $expires]);
+        $log_stmt = $conn->prepare("INSERT INTO admin_auth_log (user_id, otp, expires_at) VALUES (?, ?, DATE_ADD(NOW(), INTERVAL 5 MINUTE))");
+        $log_stmt->execute([$real_id, $otp]);
 
         // Secure Session (Partial auth)
         session_regenerate_id(true);
@@ -62,7 +61,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         
         // Log to security console (simulated)
         $log_file = '../backend/security_audit.txt';
-        $log_msg = "[" . date('Y-m-d H:i:s') . "] 2FA INVOLKED: Admin ($real_name) - OTP: $otp\n";
+        $log_msg = "[" . date('Y-m-d H:i:s') . "] 2FA INVOKED: Admin ($real_name) - OTP: $otp\n";
         file_put_contents($log_file, $log_msg, FILE_APPEND);
 
         header("Location: otp_verify.php");

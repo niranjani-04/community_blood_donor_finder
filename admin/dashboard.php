@@ -8,6 +8,14 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin' || !isset($_SE
 
 include '../backend/db_connect.php';
 
+// --- LIVE DB MIGRATIONS (safe, idempotent) ---
+try {
+    $conn->exec("ALTER TABLE sos_alerts ADD COLUMN IF NOT EXISTS location_name TEXT NULL");
+    $conn->exec("ALTER TABLE sos_responses MODIFY COLUMN status ENUM('accepted','rejected','completed','stale','withdrawn') DEFAULT 'accepted'");
+    // Repair corrupted rows: ENUM mismatch silently set status to '' instead of 'stale'
+    $conn->exec("UPDATE sos_responses SET status = 'stale' WHERE status = ''");
+} catch (Exception $e) { /* ignore */ }
+
 // --- DATA FETCHING ---
 
 // 1. Stats
@@ -21,8 +29,9 @@ $hospitals = $conn->query("SELECT * FROM hospitals ORDER BY name")->fetchAll(PDO
 // 3. Fetch Camps
 $camps = $conn->query("SELECT * FROM blood_camps ORDER BY camp_date")->fetchAll(PDO::FETCH_ASSOC);
 
-// 4. Fetch Active Alerts
-$alerts = $conn->query("SELECT a.*, u.name as requester_name, u.phone as requester_phone 
+// 4. Fetch Active Alerts with Responder Count (count accepted + stale, not rejected/withdrawn)
+$alerts = $conn->query("SELECT a.*, u.name as requester_name, u.phone as requester_phone,
+                        (SELECT COUNT(*) FROM sos_responses r WHERE r.alert_id = a.alert_id AND r.status IN ('accepted','stale')) as responder_count
                         FROM sos_alerts a 
                         JOIN users u ON a.requester_id = u.user_id 
                         WHERE a.status = 'active' 
@@ -38,20 +47,36 @@ $history = $conn->query("SELECT dh.*, u.name as donor_name, u.blood_group, h.nam
                          LEFT JOIN hospitals h ON dh.hospital_id = h.hospital_id
                          ORDER BY dh.completed_at DESC LIMIT 50")->fetchAll(PDO::FETCH_ASSOC);
 
-// 7. Fetch Active Donors
-$donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+// 7. Fetch Active Donors (all - locked and activated)
+$donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY is_activated ASC, created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+
+// Count donors pending activation
+$pending_activation_count = $conn->query("SELECT COUNT(*) FROM users WHERE role = 'donor' AND is_activated = 0")->fetchColumn();
+
+// 8. Fetch Active SOS Responses (Global for Dashboard & Alerts)
+$responses = $conn->query("SELECT r.*, u.name as donor_name, u.blood_group as donor_bg, req.name as requester_name, s.blood_group as req_bg 
+                           FROM sos_responses r 
+                           JOIN users u ON r.donor_id = u.user_id 
+                           JOIN sos_alerts s ON r.alert_id = s.alert_id 
+                           JOIN users req ON s.requester_id = req.user_id 
+                           WHERE r.status IN ('accepted','stale') 
+                           ORDER BY r.accepted_at DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
 
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Community Blood Donor Finder - Bishop Heber College</title>
+    <title>Community-Based Emergency Blood Donor Finder System for Bishop Heber College</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    
+    <!-- Leaflet Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         :root {
             --primary: #ff2d55;
@@ -363,6 +388,68 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
             background-color: rgba(255, 255, 255, 0.2);
         }
 
+        /* --- Refined Dropdown Styling --- */
+        .dropdown-menu-dark {
+            background: rgba(15, 15, 20, 0.95) !important;
+            backdrop-filter: blur(25px) !important;
+            -webkit-backdrop-filter: blur(25px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            border-radius: 20px !important;
+            padding: 10px !important;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6) !important;
+            margin-top: 15px !important;
+        }
+
+        .dropdown-item {
+            border-radius: 12px !important;
+            padding: 10px 15px !important;
+            font-size: 0.9rem !important;
+            font-weight: 500 !important;
+            transition: all 0.2s ease !important;
+            display: flex !important;
+            align-items: center !important;
+            color: rgba(255, 255, 255, 0.7) !important;
+        }
+
+        .dropdown-item i {
+            width: 20px;
+            font-size: 1rem;
+            margin-right: 10px;
+        }
+
+        .dropdown-item:hover {
+            background: rgba(255, 45, 85, 0.1) !important;
+            color: #fff !important;
+            transform: translateX(5px);
+        }
+
+        .dropdown-item.text-danger:hover {
+            background: rgba(255, 45, 85, 0.2) !important;
+            color: #ff2d55 !important;
+        }
+
+        .dropdown-divider {
+            border-color: rgba(255, 255, 255, 0.05) !important;
+            margin: 8px 0 !important;
+        }
+
+        /* --- Fleet Radar Elements --- */
+        .status-dot-green {
+            width: 8px;
+            height: 8px;
+            background: #10b981;
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px #10b981;
+            animation: pulse-green-mini 2s infinite;
+        }
+        @keyframes pulse-green-mini {
+            0% { transform: scale(0.95); opacity: 0.7; }
+            70% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(0.95); opacity: 0.7; }
+        }
+        .backdrop-blur { backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); }
+
     </style>
 </head>
 <body>
@@ -373,7 +460,7 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
         <a href="#" class="brand-text">
             <div class="d-flex align-items-center mb-1">
                 <i class="fas fa-heartbeat text-danger me-2"></i>
-                <span style="font-size: 0.9em;">Community Blood Donor Finder</span>
+                <span style="font-size: 0.9em;">Community-Based Emergency Blood Donor Finder System</span>
             </div>
             <small class="text-secondary fw-normal" style="font-size: 0.65em; padding-left: 28px; text-transform: uppercase; letter-spacing: 1px;">Bishop Heber College</small>
         </a>
@@ -396,12 +483,18 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
         </a>
         <a class="nav-link" data-target="donors">
             <i class="fas fa-user-check"></i> <span>Manage Donors</span>
+            <?php if ($pending_activation_count > 0): ?>
+            <span class="badge bg-danger ms-auto" style="font-size:0.65rem;"><?php echo $pending_activation_count; ?> Pending</span>
+            <?php endif; ?>
         </a>
         <a class="nav-link" data-target="donations">
             <i class="fas fa-file-medical"></i> <span>All Donations</span>
         </a>
         <a class="nav-link" data-target="logs">
             <i class="fas fa-terminal"></i> <span>System Logs</span>
+        </a>
+        <a class="nav-link text-warning" data-target="fleet">
+            <i class="fas fa-satellite-dish"></i> <span>Live Fleet Radar</span>
         </a>
         
         <div class="my-4 border-top border-secondary opacity-25 mx-3"></div>
@@ -427,12 +520,18 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
                 <i class="fas fa-bars fa-lg"></i>
             </button>
             <div class="dropdown">
-                <a href="#" class="d-flex align-items-center text-decoration-none text-white">
+                <a href="#" class="d-flex align-items-center text-decoration-none text-white dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
                     <div class="rounded-circle bg-danger bg-opacity-10 p-2 me-2">
                          <i class="fas fa-user-shield text-danger"></i>
                     </div>
                     <span class="d-none d-sm-inline font-weight-bold">Administrator</span>
                 </a>
+                <ul class="dropdown-menu dropdown-menu-end dropdown-menu-dark border-secondary bg-dark shadow-lg rounded-4 p-2 mt-2">
+                    <li><a class="dropdown-item rounded-3 py-2" href="#"><i class="fas fa-cog me-2 opacity-50"></i> Settings</a></li>
+                    <li><a class="dropdown-item rounded-3 py-2" href="../index.php"><i class="fas fa-external-link-alt me-2 opacity-50"></i> View Site</a></li>
+                    <li><hr class="dropdown-divider border-secondary opacity-25"></li>
+                    <li><a class="dropdown-item rounded-3 py-2 text-danger" href="../logout.php"><i class="fas fa-power-off me-2"></i> Log Out</a></li>
+                </ul>
             </div>
         </div>
     </div>
@@ -527,6 +626,54 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
                         <button onclick="$('.nav-link[data-target=\'registry\']').click()" class="btn btn-outline-light text-start rounded-pill py-2">
                             <i class="fas fa-search me-2"></i> Search Registry
                         </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Live SOS Responses Overview (Added as requested) -->
+        <div class="row g-4 mt-2">
+            <div class="col-12">
+                <div class="card-box">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <h5 class="fw-bold mb-0 text-white">Live SOS Responses</h5>
+                        <button onclick="$('.nav-link[data-target=\'alerts\']').click()" class="btn btn-sm btn-outline-light rounded-pill px-3">View All Alerts</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table align-items-center mb-0 text-white">
+                            <thead>
+                                <tr class="text-secondary">
+                                    <th>Donor</th>
+                                    <th>Group</th>
+                                    <th>Responding To</th>
+                                    <th>Status</th>
+                                    <th>Accepted At</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php if(empty($responses)): ?>
+                                    <tr><td colspan="6" class="text-center py-4 text-secondary">No active responses at the moment.</td></tr>
+                                <?php else: 
+                                    foreach($responses as $res): ?>
+                                    <tr>
+                                        <td><b class="text-white"><?php echo htmlspecialchars($res['donor_name']); ?></b></td>
+                                        <td><span class="badge bg-danger"><?php echo $res['donor_bg']; ?></span></td>
+                                        <td>
+                                            <small class="text-secondary">#<?php echo $res['alert_id']; ?>: <?php echo htmlspecialchars($res['requester_name']); ?></small><br>
+                                            <span class="text-xs">Needs: <b><?php echo $res['req_bg']; ?></b></span>
+                                        </td>
+                                        <td><span class="badge bg-success bg-opacity-10 text-success border border-success border-opacity-25">On the way</span></td>
+                                        <td><span class="text-xs text-secondary"><?php echo date('H:i', strtotime($res['accepted_at'])); ?></span></td>
+                                        <td>
+                                            <a href="../track.php?alert_id=<?php echo $res['alert_id']; ?>" target="_blank" class="btn btn-sm btn-outline-info rounded-pill px-3 me-1">
+                                                <i class="fas fa-map-marker-alt"></i> Track
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; endif; ?>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
@@ -669,13 +816,19 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
             <?php foreach($alerts as $a): ?>
             <div class="col-md-6 col-lg-4">
                 <div class="card-box border-start border-4 border-danger position-relative">
-                    <span class="position-absolute top-0 end-0 m-3 badge bg-danger animate-pulse">LIVE SOS</span>
+                    <div class="d-flex justify-content-between align-items-start mb-2">
+                        <span class="badge bg-danger animate-pulse">LIVE SOS</span>
+                        <div class="text-end">
+                            <span class="badge bg-opacity-10 <?php echo $a['responder_count'] > 0 ? 'bg-success text-success border-success' : 'bg-warning text-warning border-warning'; ?> border px-2 py-1">
+                                <i class="fas fa-users me-1"></i> <?php echo $a['responder_count']; ?> Responding
+                            </span>
+                        </div>
+                    </div>
                     <h5 class="fw-bold text-danger mb-1"><?php echo $a['blood_group']; ?> Needed</h5>
                     <div class="mb-2">
-                        <small class="text-white d-block"><i class="fas fa-map-pin text-danger me-1"></i> <?php echo htmlspecialchars($a['location_name'] ?? 'Location not available'); ?></small>
-                        <small class="text-secondary">Req ID: #<?php echo $a['alert_id']; ?></small>
+                        <small class="text-white d-block text-truncate"><i class="fas fa-map-pin text-danger me-1"></i> <?php echo htmlspecialchars($a['location_name'] ?? 'Location not available'); ?></small>
+                        <small class="text-secondary">Req ID: #<?php echo $a['alert_id']; ?> • Created: <?php echo date('H:i', strtotime($a['created_at'])); ?></small>
                     </div>
-                    
                     <div class="d-flex align-items-center mb-3">
                         <div class="rounded-circle bg-dark border border-secondary p-2 me-3 text-center" style="width:40px;height:40px;">
                             <i class="fas fa-user text-secondary"></i>
@@ -690,9 +843,9 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
                         <a href="../track.php?alert_id=<?php echo $a['alert_id']; ?>" target="_blank" class="btn btn-outline-light btn-sm rounded-pill">
                             <i class="fas fa-map-marker-alt text-danger me-1"></i> Track Donors
                         </a>
-                        <a href="confirm_donation.php?alert_id=<?php echo $a['alert_id']; ?>" class="btn btn-danger btn-sm rounded-pill">
+                        <button onclick="openConfirmModal('<?php echo $a['alert_id']; ?>', '<?php echo $a['blood_group']; ?>')" class="btn btn-danger btn-sm rounded-pill">
                             Mark as Fulfilled
-                        </a>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -719,13 +872,6 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
                             </thead>
                             <tbody>
                                 <?php 
-                                $responses = $conn->query("SELECT r.*, u.name as donor_name, u.blood_group as donor_bg, req.name as requester_name, s.blood_group as req_bg 
-                                                           FROM sos_responses r 
-                                                           JOIN users u ON r.donor_id = u.user_id 
-                                                           JOIN sos_alerts s ON r.alert_id = s.alert_id 
-                                                           JOIN users req ON s.requester_id = req.user_id 
-                                                           WHERE r.status = 'accepted' 
-                                                           ORDER BY r.accepted_at DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
                                 if(empty($responses)): ?>
                                     <tr><td colspan="6" class="text-center py-4 text-secondary">No active responses at the moment.</td></tr>
                                 <?php else: 
@@ -822,7 +968,7 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
                             <td><span class="text-xs text-white"><?php echo $s['phone']; ?></span></td>
                             
                             <td>
-                                <a href="add_student.php?edit=<?php echo $s['register_number']; ?>" class="text-info me-2"><i class="fas fa-edit"></i></a>
+                                <button onclick="openEditStudent('<?php echo $s['register_number']; ?>', '<?php echo addslashes($s['name']); ?>', '<?php echo $s['dob']; ?>', '<?php echo $s['age']; ?>', '<?php echo $s['blood_group']; ?>', '<?php echo addslashes($s['health_eligibility']); ?>', '<?php echo $s['email']; ?>', '<?php echo $s['phone']; ?>', '<?php echo addslashes($s['address'] ?? ''); ?>')" class="btn btn-link text-info p-0 me-2"><i class="fas fa-edit"></i></button>
                                 <a href="add_student.php?delete=<?php echo $s['register_number']; ?>" class="text-danger" onclick="return confirm('Delete this student?')"><i class="fas fa-trash"></i></a>
                             </td>
                         </tr>
@@ -837,7 +983,7 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
     <div id="view-donors" class="content-view hidden">
         <div class="card-box">
             <div class="d-flex justify-content-between align-items-center mb-4">
-                <h5 class="mb-0 fw-bold text-white">Activated Donors (Active Accounts)</h5>
+                <h5 class="mb-0 fw-bold text-white">Donor Security & Account Management</h5>
                 <div class="input-group input-group-sm" style="width: 250px;">
                     <span class="input-group-text bg-dark border-secondary text-secondary"><i class="fas fa-search"></i></span>
                     <input type="text" id="donorSearch" class="form-control" placeholder="Search by name or reg no...">
@@ -853,7 +999,7 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
                             <th>Email</th>
                             <th>Phone</th>
                             <th>Points</th>
-                            <th>Status</th>
+                            <th>Status/Security</th>
                             <th>Action</th>
                         </tr>
                     </thead>
@@ -868,7 +1014,17 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
                             <td><small class="text-white-50"><?php echo $donor['email']; ?></small></td>
                             <td><small class="text-white-50"><?php echo $donor['phone']; ?></small></td>
                             <td><span class="text-success fw-bold"><?php echo $donor['points']; ?> pts</span></td>
-                            <td><span class="badge bg-dark"><?php echo $donor['availability_status']; ?></span></td>
+                            <td>
+                                <span class="badge bg-dark mb-1 d-block" style="font-size: 0.7rem;"><?php echo $donor['availability_status']; ?></span>
+                                <div class="form-check form-switch d-flex align-items-center gap-2">
+                                    <input class="form-check-input security-toggle" type="checkbox" 
+                                           data-user-id="<?php echo $donor['user_id']; ?>" 
+                                           <?php echo $donor['is_activated'] ? 'checked' : ''; ?>>
+                                    <label class="form-check-label text-xs <?php echo $donor['is_activated'] ? 'text-success' : 'text-danger'; ?>">
+                                        <?php echo $donor['is_activated'] ? 'Activated' : 'Locked'; ?>
+                                    </label>
+                                </div>
+                            </td>
                             <td>
                                 <a href="add_student.php?edit=<?php echo $donor['register_number']; ?>" class="text-info me-2"><i class="fas fa-edit"></i></a>
                                 <a href="add_student.php?delete=<?php echo $donor['register_number']; ?>" class="text-danger" onclick="return confirm('Delete this donor account and registry record?')"><i class="fas fa-trash"></i></a>
@@ -934,6 +1090,43 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
         </div>
     </div>
 
+    <!-- 8. LIVE FLEET RADAR VIEW -->
+    <div id="view-fleet" class="content-view hidden">
+        <div class="card-box p-0 overflow-hidden" style="height: calc(100vh - 200px); position: relative; border-radius: 28px;">
+            <div id="fleet-map" style="height: 100%; width: 100%;"></div>
+            
+            <!-- Contextual Sidebar within the view -->
+            <div class="position-absolute top-0 start-0 m-3 p-3 bg-dark bg-opacity-75 backdrop-blur rounded-4 border border-secondary border-opacity-25" style="width: 300px; z-index: 1000; max-height: 90%; overflow-y: auto;">
+                <div class="d-flex align-items-center mb-3">
+                    <span class="status-dot-green"></span>
+                    <span class="text-xs fw-bold text-uppercase text-success ms-2">Radar Active</span>
+                </div>
+                <div class="stat-grid-mini row g-2 mb-3">
+                    <div class="col-6">
+                        <div class="p-2 bg-white bg-opacity-5 rounded-3 text-center border border-secondary border-opacity-10">
+                            <span class="d-block text-danger fw-bold h5 mb-0" id="fleet-alerts-count">0</span>
+                            <span class="text-xs text-secondary text-uppercase">Alerts</span>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="p-2 bg-white bg-opacity-5 rounded-3 text-center border border-secondary border-opacity-10">
+                            <span class="d-block text-success fw-bold h5 mb-0" id="fleet-donors-count">0</span>
+                            <span class="text-xs text-secondary text-uppercase">Donors</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="fleet-mini-list">
+                    <div class="text-center py-4 opacity-50"><i class="fas fa-satellite-dish fa-spin mb-2"></i><br><small>Syncing Radar...</small></div>
+                </div>
+            </div>
+
+            <!-- Last Update Badge -->
+            <div class="position-absolute top-0 end-0 m-3 px-3 py-2 bg-dark bg-opacity-75 backdrop-blur rounded-pill border border-secondary border-opacity-25 text-xs z-index-1000">
+                <i class="fas fa-sync-alt me-1 text-info"></i> <span id="fleet-sync-label">Awaiting Data...</span>
+            </div>
+        </div>
+    </div>
+
     <!-- UPLOAD MODAL -->
     <div id="uploadModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:2000; backdrop-filter: blur(5px);">
         <div class="card border-0 shadow-lg p-0 bg-dark" style="width:500px; margin: 50px auto; max-width:90%; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1);">
@@ -965,6 +1158,100 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
     </div>
 
 </main>
+
+<!-- ADD/EDIT STUDENT MODAL -->
+<div id="studentModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:2000; backdrop-filter: blur(5px);">
+    <div class="card border-0 shadow-lg p-0 bg-dark" style="width:600px; margin: 50px auto; max-width:90%; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1);">
+        <div class="card-header border-bottom border-secondary p-3 d-flex justify-content-between align-items-center">
+             <h5 class="mb-0 fw-bold text-white" id="studentModalTitle">Add New Student</h5>
+             <button type="button" class="btn-close btn-close-white" onclick="$('#studentModal').fadeOut()"></button>
+        </div>
+        <div class="card-body p-4">
+            <form action="add_student.php" method="POST">
+                <input type="hidden" name="action" id="studentAction" value="add">
+                
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="text-xs text-secondary mb-1">Register Number</label>
+                        <input type="text" name="register_number" id="s_reg" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-xs text-secondary mb-1">Full Name</label>
+                        <input type="text" name="name" id="s_name" class="form-control" required>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="text-xs text-secondary mb-1">Date of Birth</label>
+                        <input type="date" name="dob" id="s_dob" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-xs text-secondary mb-1">Blood Group</label>
+                        <select name="blood_group" id="s_bg" class="form-select" required>
+                            <option value="">Select</option>
+                            <?php foreach(['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'] as $g) echo "<option value='$g'>$g</option>"; ?>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="text-xs text-secondary mb-1">Email</label>
+                        <input type="email" name="email" id="s_email" class="form-control" required>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="text-xs text-secondary mb-1">Phone</label>
+                        <input type="tel" name="phone" id="s_phone" class="form-control" required pattern="[0-9]{10}">
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="text-xs text-secondary mb-1">Health Eligibility / Notes</label>
+                    <input type="text" name="health_eligibility" id="s_health" class="form-control" placeholder="Fit / Underweight / etc.">
+                </div>
+
+                <button type="submit" class="btn btn-primary w-100 rounded-pill fw-bold py-2">Save Student Record</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- CONFIRM DONATION MODAL -->
+<div id="confirmFinalModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:2000; backdrop-filter: blur(5px);">
+    <div class="card border-0 shadow-lg p-0 bg-dark" style="width:450px; margin: 100px auto; max-width:90%; border-radius: 20px; border: 1px solid rgba(255,255,255,0.1);">
+        <div class="card-body p-4 text-center">
+            <div class="rounded-circle bg-danger bg-opacity-10 p-3 d-inline-block mb-3">
+                <i class="fas fa-check-circle fa-2x text-danger"></i>
+            </div>
+            <h5 class="fw-bold text-white mb-1">Finalize Donation</h5>
+            <p class="text-secondary small mb-4">Select the verified donor for Alert #<span id="confirm-alert-id"></span></p>
+            
+            <form action="confirm_donation.php" method="POST" class="text-start">
+                <input type="hidden" name="alert_id" id="modal-alert-id">
+                
+                <div class="mb-3">
+                    <label class="text-xs text-secondary mb-2">Responding Donor</label>
+                    <select name="donor_id" id="donor-select" class="form-select bg-black border-secondary" required>
+                        <option value="">Loading Donors...</option>
+                    </select>
+                </div>
+
+                <div class="mb-4">
+                    <label class="text-xs text-secondary mb-2">Donated At (Hospital)</label>
+                    <select name="hospital_id" class="form-select bg-black border-secondary" required>
+                        <?php foreach($hospitals as $h) echo "<option value='{$h['hospital_id']}'>{$h['name']}</option>"; ?>
+                    </select>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="submit" class="btn btn-danger rounded-pill fw-bold">Confirm & Grant Points</button>
+                    <button type="button" class="btn btn-outline-secondary border-0 text-xs" onclick="$('#confirmFinalModal').fadeOut()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <!-- ADD CAMP MODAL -->
 <div id="addCampModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); z-index:2000; backdrop-filter: blur(5px);">
@@ -1107,12 +1394,218 @@ $donors_list = $conn->query("SELECT * FROM users WHERE role = 'donor' ORDER BY c
         $('#logContent').load('get_system_logs.php');
     }
 
+    // Security Toggle Handler
+    $(document).on('change', '.security-toggle', function() {
+        const checkbox = $(this);
+        const userId = checkbox.data('user-id');
+        const status = checkbox.is(':checked') ? 1 : 0;
+        const label = checkbox.next('.form-check-label');
+
+        $.ajax({
+            url: 'toggle_activation.php',
+            method: 'POST',
+            data: { user_id: userId, status: status },
+            dataType: 'json',
+            success: function(response) {
+                if (response.success) {
+                    if (status) {
+                        label.text('Activated').removeClass('text-danger').addClass('text-success');
+                    } else {
+                        label.text('Locked').removeClass('text-success').addClass('text-danger');
+                    }
+                    // Show a transient notification or just rely on the label change
+                } else {
+                    alert('Error: ' + response.message);
+                    checkbox.prop('checked', !status); // Revert
+                }
+            },
+            error: function() {
+                alert('Communication error with server.');
+                checkbox.prop('checked', !status); // Revert
+            }
+        });
+    });
+
     // Nav Link Click Handling with log loading
     $('.nav-link').on('click', function() {
         const target = $(this).data('target');
         if(target === 'logs') loadLogs();
+        if(target === 'fleet') initFleetRadar();
     });
+
+    var fleetMap = null;
+    var fleetMarkers = {};
+    var fleetPolylines = {};
+    var fleetSSE = null;
+
+    function initFleetRadar() {
+        if (fleetMap) {
+            setTimeout(() => fleetMap.invalidateSize(), 500);
+            return;
+        }
+
+        // Delay slightly for transition
+        setTimeout(() => {
+            fleetMap = L.map('fleet-map', {
+                zoomControl: false,
+                attributionControl: false
+            }).setView([10.8211, 78.6934], 14);
+
+            L.control.zoom({ position: 'bottomright' }).addTo(fleetMap);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                maxZoom: 19,
+                subdomains: 'abcd'
+            }).addTo(fleetMap);
+
+            startFleetSSE();
+        }, 1500);
+    }
+
+    function startFleetSSE() {
+        if (fleetSSE) return;
+        
+        fleetSSE = new EventSource('../backend/sse_tracking.php');
+        
+        fleetSSE.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            $('#fleet-sync-label').text('Sync: ' + data.timestamp);
+            $('#fleet-alerts-count').text(data.alerts.length);
+            $('#fleet-donors-count').text(data.donors.length);
+            
+            updateFleetMap(data);
+            updateFleetList(data);
+        };
+
+        fleetSSE.onerror = function() {
+            $('#fleet-sync-label').text('Searching Signal...');
+        };
+    }
+
+    function updateFleetMap(data) {
+        let alertMap = {};
+        data.alerts.forEach(a => alertMap[a.alert_id] = a);
+
+        // Hospitals
+        data.hospitals.forEach(h => {
+            let key = 'h_' + h.name;
+            if (!fleetMarkers[key]) {
+                fleetMarkers[key] = L.marker([h.latitude, h.longitude], {
+                    icon: L.divIcon({
+                        className: 'h-icon',
+                        html: '<div style="background:#3b82f6; width:12px; height:12px; border:2px solid #fff; border-radius:50%;"></div>'
+                    })
+                }).addTo(fleetMap).bindPopup(h.name);
+            }
+        });
+
+        // Alerts
+        data.alerts.forEach(a => {
+            let key = 'a_' + a.alert_id;
+            if (fleetMarkers[key]) {
+                fleetMarkers[key].setLatLng([a.latitude, a.longitude]);
+            } else {
+                fleetMarkers[key] = L.marker([a.latitude, a.longitude], {
+                    icon: L.divIcon({
+                        className: 'a-icon',
+                        html: '<div style="background:#ff2d55; width:16px; height:16px; border:2px solid #fff; border-radius:50%; box-shadow:0 0 10px #ff2d55;"></div>'
+                    })
+                }).addTo(fleetMap).bindPopup(`<b>Alert #${a.alert_id}</b><br>${a.blood_group}`);
+            }
+        });
+
+        // Donors
+        data.donors.forEach(d => {
+            let key = 'd_' + d.user_id;
+            let targetAlert = alertMap[d.alert_id];
+            
+            if (fleetMarkers[key]) {
+                fleetMarkers[key].setLatLng([d.latitude, d.longitude]);
+            } else {
+                fleetMarkers[key] = L.marker([d.latitude, d.longitude], {
+                    icon: L.divIcon({
+                        className: 'd-icon',
+                        html: '<div style="background:#10b981; width:14px; height:14px; border:2px solid #fff; border-radius:50%; box-shadow:0 0 10px #10b981;"></div>'
+                    })
+                }).addTo(fleetMap).bindPopup(`<b>Donor: ${d.name}</b>`);
+            }
+
+            if (targetAlert) {
+                if (fleetPolylines[key]) {
+                    fleetPolylines[key].setLatLngs([[d.latitude, d.longitude], [targetAlert.latitude, targetAlert.longitude]]);
+                } else {
+                    fleetPolylines[key] = L.polyline([[d.latitude, d.longitude], [targetAlert.latitude, targetAlert.longitude]], {
+                        color: '#10b981', weight: 2, opacity: 0.3, dashArray: '5, 10'
+                    }).addTo(fleetMap);
+                }
+            }
+        });
+    }
+
+    function updateFleetList(data) {
+        let html = '';
+        if (data.alerts.length === 0 && data.donors.length === 0) {
+            html = '<div class="text-center py-4 text-secondary small">No active responses.</div>';
+        }
+        data.donors.forEach(d => {
+            html += `<div class="p-2 mb-2 bg-white bg-opacity-5 rounded-3 border border-secondary border-opacity-10">
+                        <div class="d-flex justify-content-between align-items-center mb-1">
+                            <span class="fw-bold text-white small">${d.name}</span>
+                            <span class="badge bg-danger text-xs">${d.blood_group}</span>
+                        </div>
+                        <div class="text-xs text-secondary"><i class="fas fa-satellite me-1"></i> Responding to #${d.alert_id}</div>
+                    </div>`;
+        });
+        $('#fleet-mini-list').html(html);
+    }
+
+    function getDistance(lat1, lon1, lat2, lon2) {
+        var R = 6371;
+        var dLat = (lat2-lat1) * Math.PI / 180;
+        var dLon = (lon2-lon1) * Math.PI / 180;
+        var a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+        return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
+    }
+
+    // Modal Helpers
+    function openEditStudent(reg, name, dob, age, bg, health, email, phone, addr) {
+        $('#studentModalTitle').text('Edit Student Record');
+        $('#studentAction').val('edit');
+        $('#s_reg').val(reg).attr('readonly', true);
+        $('#s_name').val(name);
+        $('#s_dob').val(dob);
+        $('#s_bg').val(bg);
+        $('#s_health').val(health);
+        $('#s_email').val(email);
+        $('#s_phone').val(phone);
+        $('#studentModal').fadeIn();
+    }
+
+    function openConfirmModal(alertId, bg) {
+        $('#confirm-alert-id').text(alertId);
+        $('#modal-alert-id').val(alertId);
+        $('#donor-select').html('<option value="">Loading Donors...</option>');
+        $('#confirmFinalModal').fadeIn();
+
+        // Fetch accepted donors via AJAX
+        $.get('../backend/fetch_acceptors.php?alert_id=' + alertId, function(res) {
+            const acceptors = JSON.parse(res);
+            let html = '<option value="">-- Choose Donor --</option>';
+            if(acceptors.length === 0) {
+                html = '<option value="">No Active Responses Found</option>';
+            } else {
+                // Wait, fetch_acceptors.php needs to return user_id. Let's check it.
+                // If it doesn't, I might need to update it.
+                acceptors.forEach(a => {
+                    html += `<option value="${a.user_id}">${a.name} (${a.blood_group})</option>`;
+                });
+            }
+            $('#donor-select').html(html);
+        });
+    }
 </script>
+
+<!-- Bootstrap JS Bundle -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/js/bootstrap.bundle.min.js"></script>
 
 </body>
 </html>

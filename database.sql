@@ -51,6 +51,7 @@ CREATE TABLE sos_alerts (
     blood_group VARCHAR(5) NOT NULL,
     latitude DECIMAL(10, 8) NOT NULL,
     longitude DECIMAL(11, 8) NOT NULL,
+    location_name TEXT NULL,
     status ENUM('active', 'accepted', 'completed', 'cancelled') DEFAULT 'active',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (requester_id) REFERENCES users(user_id) ON DELETE CASCADE
@@ -61,7 +62,7 @@ CREATE TABLE sos_responses (
     response_id INT AUTO_INCREMENT PRIMARY KEY,
     alert_id INT,
     donor_id INT,
-    status ENUM('accepted', 'rejected', 'completed') DEFAULT 'accepted',
+    status ENUM('accepted', 'rejected', 'completed', 'stale', 'withdrawn') DEFAULT 'accepted',
     accepted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (alert_id) REFERENCES sos_alerts(alert_id) ON DELETE CASCADE,
     FOREIGN KEY (donor_id) REFERENCES users(user_id) ON DELETE CASCADE

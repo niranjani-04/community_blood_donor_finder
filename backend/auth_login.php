@@ -14,8 +14,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         die("Too many login attempts. Please try again after 15 minutes.");
     }
 
-    $reg_no = $_POST['register_number'];
-    $dob = $_POST['dob'];
+    $reg_no = trim($_POST['register_number']);
+    $dob    = $_POST['dob'];
+
+    // 0. Format check — reject if it looks like a name (only letters/spaces)
+    if (preg_match('/^[a-zA-Z\s\.]+$/', $reg_no) && strlen($reg_no) > 1) {
+        header("Location: ../login.php?status=invalid_format");
+        exit();
+    }
 
     // 1. First check if they exist in preloaded_students at all
     $reg_stmt = $conn->prepare("SELECT * FROM preloaded_students WHERE TRIM(UPPER(register_number)) = TRIM(UPPER(?)) AND dob = ?");
@@ -39,9 +45,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$user) {
-        // AUTO-ACTIVATE: Add to users table automatically for easier testing.
-        $insert_stmt = $conn->prepare("INSERT INTO users (register_number, name, email, phone, blood_group, role, points, availability_status) 
-                                      VALUES (?, ?, ?, ?, ?, 'donor', 100, 'Available')");
+        // NEW ACCOUNTS START LOCKED: admin must activate before the donor can respond to alerts.
+        $insert_stmt = $conn->prepare("INSERT INTO users (register_number, name, email, phone, blood_group, role, points, availability_status, is_activated) 
+                                      VALUES (?, ?, ?, ?, ?, 'donor', 100, 'Available', 0)");
         $insert_stmt->execute([
             $preloaded['register_number'], 
             $preloaded['name'], 

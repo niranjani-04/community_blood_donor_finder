@@ -23,22 +23,39 @@ foreach($inventory as $item) {
 $blood_groups = ['A+', 'A-', 'B+', 'B-', 'O+', 'O-', 'AB+', 'AB-'];
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_stock'])) {
+    require_once '../backend/notification_helper.php';
+    $low_alerts_sent = 0;
+    
     foreach ($blood_groups as $bg) {
         $units = (int)($_POST['units'][$bg] ?? 0);
         
         // Check if exists
-        $check = $conn->prepare("SELECT stock_id FROM blood_inventory WHERE hospital_id = ? AND blood_group = ?");
+        $check = $conn->prepare("SELECT stock_id, units FROM blood_inventory WHERE hospital_id = ? AND blood_group = ?");
         $check->execute([$hid, $bg]);
+        $existing = $check->fetch(PDO::FETCH_ASSOC);
         
-        if ($check->rowCount() > 0) {
+        if ($existing) {
+            $old_units = (int)$existing['units'];
             $upd = $conn->prepare("UPDATE blood_inventory SET units = ?, updated_at = CURRENT_TIMESTAMP WHERE hospital_id = ? AND blood_group = ?");
             $upd->execute([$units, $hid, $bg]);
+            
+            // AUTOMATIC ALERT: If stock becomes low (below 3) and it wasn't already low (or even if it was, we alert on update)
+            // To avoid too much spam, we only alert if it DROPPED to low or stayed at 0
+            if ($units < 3 && $units < $old_units) {
+                broadcastStockAlert($conn, $hid, $bg);
+                $low_alerts_sent++;
+            }
         } else {
             $ins = $conn->prepare("INSERT INTO blood_inventory (hospital_id, blood_group, units) VALUES (?, ?, ?)");
             $ins->execute([$hid, $bg, $units]);
+            
+            if ($units < 3 && $units > 0) {
+                broadcastStockAlert($conn, $hid, $bg);
+                $low_alerts_sent++;
+            }
         }
     }
-    header("Location: dashboard.php?success=1");
+    header("Location: dashboard.php?success=1&alerts=$low_alerts_sent");
     exit();
 }
 ?>
@@ -46,7 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['update_stock'])) {
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Hospital Dashboard - Blood Sync</title>
+    <title>Hospital Dashboard - Community-Based Emergency Blood Donor Finder System</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
